@@ -154,8 +154,8 @@ def validate_charset_range(charset_range: Union[int, str, List[str]]) -> bool:
         return True
     
     if isinstance(charset_range, int):
-        if charset_range < 0:
-            raise DDDDOCRError("字符集范围索引必须为非负整数")
+        if not 0 <= charset_range <= 7:
+            raise DDDDOCRError("整数形式的字符集范围必须在0-7之间")
     elif isinstance(charset_range, str):
         if len(charset_range) == 0:
             raise DDDDOCRError("字符集范围字符串不能为空")

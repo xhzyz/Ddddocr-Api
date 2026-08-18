@@ -92,9 +92,23 @@ class CharsetManager:
         self.charset_range.clear()
         
         if isinstance(charset_range, int):
-            # 按索引范围限制
-            if 0 <= charset_range < len(self.charset):
-                self.charset_range = self.charset[:charset_range + 1]
+            # 使用原版 ddddocr 的 0-7 内置范围预设
+            lower = list("abcdefghijklmnopqrstuvwxyz")
+            upper = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+            digits = list("0123456789")
+            presets = {
+                0: digits,
+                1: lower,
+                2: upper,
+                3: lower + upper,
+                4: lower + digits,
+                5: upper + digits,
+                6: lower + upper + digits,
+                7: [item for item in self.charset if item not in lower + upper + digits],
+            }
+            if charset_range not in presets:
+                raise ValueError("integer charset_range must be between 0 and 7")
+            self.charset_range = presets[charset_range]
         elif isinstance(charset_range, str):
             # 按字符串限制
             for char in charset_range:
@@ -105,7 +119,9 @@ class CharsetManager:
             self.charset_range = charset_range.copy()
         
         # 去重并添加空字符
-        self.charset_range = list(set(self.charset_range)) + [""]
+        self.charset_range = list(dict.fromkeys(self.charset_range))
+        if "" not in self.charset_range:
+            self.charset_range.append("")
         
         # 计算有效索引
         self._update_valid_indices()
@@ -232,7 +248,7 @@ class CharsetManager:
     def clear_ranges(self) -> None:
         """清空字符集范围限制"""
         self.charset_range.clear()
-        self.valid_charset_range_index.clear()
+        self._update_valid_indices()
     
     def _get_old_charset(self) -> List[str]:
         """获取旧版字符集"""

@@ -99,14 +99,17 @@ class BaseEngine(ABC):
     
     def cleanup(self) -> None:
         """清理资源"""
-        if self.session:
-            del self.session
+        session = getattr(self, "session", None)
+        if session:
             self.session = None
         self.is_initialized = False
     
     def __del__(self):
         """析构函数"""
-        self.cleanup()
+        try:
+            self.cleanup()
+        except Exception:
+            pass
     
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(use_gpu={self.use_gpu}, device_id={self.device_id}, ready={self.is_ready()})"

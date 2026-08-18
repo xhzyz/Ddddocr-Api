@@ -1,9 +1,10 @@
-FROM python:3.10-slim
+FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu22.04
 
 LABEL maintainer="sml2h3"
-LABEL description="DdddOcr HTTP API service"
+LABEL description="DdddOcr HTTP API service with NVIDIA GPU support"
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     DDDDOCR_HOST=0.0.0.0 \
@@ -13,7 +14,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DDDDOCR_DET=false \
     DDDDOCR_OLD=false \
     DDDDOCR_BETA=false \
-    DDDDOCR_USE_GPU=false \
+    DDDDOCR_USE_GPU=true \
     DDDDOCR_DEVICE_ID=0 \
     DDDDOCR_SHOW_AD=false \
     DDDDOCR_IMPORT_ONNX_PATH="" \
@@ -21,23 +22,27 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Runtime libraries used by ONNX Runtime and OpenCV headless.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
+        python3 \
+        python3-pip \
         libglib2.0-0 \
         libgl1 \
         libgomp1 \
         passwd \
-    && update-ca-certificates \
+    && ln -sf /usr/bin/python3 /usr/local/bin/python \
+    && python -m pip install --upgrade pip \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./requirements.txt
-RUN python -m pip install --upgrade pip \
-    && python -m pip install -r requirements.txt
 
-# Only copy the importable package; examples and Git metadata are not needed
-# by the running API container.
+# Replace the CPU-only runtime with the CUDA-enabled wheel. ONNX Runtime 1.19+
+# PyPI GPU wheels use CUDA 12.x.
+RUN grep -v -E '^onnxruntime([<>= ].*)?$' requirements.txt > requirements-gpu.txt \
+    && python -m pip install -r requirements-gpu.txt \
+    && python -m pip install 'onnxruntime-gpu>=1.19,<2'
+
 COPY ddddocr ./ddddocr
 COPY docker-entrypoint.sh ./docker-entrypoint.sh
 
@@ -48,7 +53,7 @@ USER appuser
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:' + __import__('os').environ.get('DDDDOCR_PORT', '8000') + '/health', timeout=3)" || exit 1
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

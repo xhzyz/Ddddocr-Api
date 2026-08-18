@@ -44,7 +44,8 @@ class SlideEngine(BaseEngine):
     
     def slide_match(self, target_image: Union[bytes, str, Image.Image], 
                    background_image: Union[bytes, str, Image.Image],
-                   simple_target: bool = False) -> Dict[str, Any]:
+                   simple_target: bool = False,
+                   flag: bool = False) -> Dict[str, Any]:
         """
         滑块匹配算法
         
@@ -67,6 +68,18 @@ class SlideEngine(BaseEngine):
             # 加载图像
             target_pil = load_image_from_input(target_image)
             background_pil = load_image_from_input(background_image)
+
+            target_x = 0
+            target_y = 0
+            if not simple_target:
+                try:
+                    target_pil, target_x, target_y = self._crop_transparent_target(target_pil)
+                except Exception:
+                    if flag:
+                        raise
+                    # Preserve the original fallback: if an alpha target
+                    # cannot be cropped, retry it as a simple target.
+                    simple_target = True
             
             # 转换为numpy数组
             target_array = image_to_numpy(target_pil, 'RGB')
@@ -74,12 +87,43 @@ class SlideEngine(BaseEngine):
             
             # 执行匹配
             result = self._perform_slide_match(target_array, background_array, simple_target)
+            # These values are offsets of the visible slider inside the
+            # original transparent target image, matching legacy ddddocr.
+            result['target_x'] = int(target_x)
+            result['target_y'] = int(target_y)
             
             return result
             
         except Exception as e:
             raise ImageProcessError(f"滑块匹配失败: {str(e)}") from e
     
+    @staticmethod
+    def _crop_transparent_target(image: Image.Image) -> Tuple[Image.Image, int, int]:
+        """Crop a transparent slider image to its visible alpha bounds."""
+        if "A" not in image.getbands():
+            return image.convert("RGB"), 0, 0
+        rgba = image.convert("RGBA")
+        alpha = np.asarray(rgba.getchannel("A"))
+        visible_y, visible_x = np.where(alpha > 0)
+        if visible_x.size == 0 or visible_y.size == 0:
+            raise ValueError("target image has no visible pixels")
+        left = int(visible_x.min())
+        top = int(visible_y.min())
+        right = int(visible_x.max()) + 1
+        bottom = int(visible_y.max()) + 1
+        cropped = rgba.crop((left, top, right, bottom))
+        white = Image.new("RGBA", cropped.size, (255, 255, 255, 255))
+        return Image.alpha_composite(white, cropped).convert("RGB"), left, top
+
+    def get_target(self, target_image: Union[bytes, str, Image.Image]) -> Tuple[Image.Image, int, int]:
+        """Return the cropped visible target and its x/y offsets."""
+        validate_image_input(target_image)
+        try:
+            image = load_image_from_input(target_image)
+            return self._crop_transparent_target(image)
+        except Exception as e:
+            raise ImageProcessError(f"滑块目标裁剪失败: {str(e)}") from e
+
     def slide_comparison(self, target_image: Union[bytes, str, Image.Image],
                         background_image: Union[bytes, str, Image.Image]) -> Dict[str, Any]:
         """
@@ -184,14 +228,11 @@ class SlideEngine(BaseEngine):
             # 获取边界框
             x, y, w, h = cv2.boundingRect(largest_contour)
             
-            # 计算中心点
-            center_x = x + w // 2
-            center_y = y + h // 2
-            
+            # 返回差异区域左上角，保持旧版接口语义
             return {
-                'target': [center_x, center_y],
-                'target_x': center_x,
-                'target_y': center_y
+                'target': [int(x), int(y)],
+                'target_x': int(x),
+                'target_y': int(y)
             }
             
         except Exception as e:
@@ -220,13 +261,15 @@ class SlideEngine(BaseEngine):
                 target_h, target_w, _ = target.shape
             else:
                 target_h, target_w = target.shape
-            center_x = max_loc[0] + target_w // 2
-            center_y = max_loc[1] + target_h // 2
+            left = int(max_loc[0])
+            top = int(max_loc[1])
+            right = left + int(target_w)
+            bottom = top + int(target_h)
             
             return {
-                'target': [center_x, center_y],
-                'target_x': center_x,
-                'target_y': center_y,
+                'target': [left, top, right, bottom],
+                'target_x': 0,
+                'target_y': 0,
                 'confidence': float(max_val)
             }
             
@@ -260,13 +303,15 @@ class SlideEngine(BaseEngine):
                 target_h, target_w, _ = target.shape
             else:
                 target_h, target_w = target.shape
-            center_x = max_loc[0] + target_w // 2
-            center_y = max_loc[1] + target_h // 2
+            left = int(max_loc[0])
+            top = int(max_loc[1])
+            right = left + int(target_w)
+            bottom = top + int(target_h)
             
             return {
-                'target': [center_x, center_y],
-                'target_x': center_x,
-                'target_y': center_y,
+                'target': [left, top, right, bottom],
+                'target_x': 0,
+                'target_y': 0,
                 'confidence': float(max_val)
             }
             

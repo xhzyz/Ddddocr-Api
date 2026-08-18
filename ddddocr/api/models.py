@@ -39,7 +39,7 @@ class OCRRequest(BaseModel):
     probability: bool = Field(False, description="是否返回概率信息")
     color_filter_colors: Optional[List[str]] = Field(None, description="颜色过滤预设颜色列表")
     color_filter_custom_ranges: Optional[List[List[List[int]]]] = Field(None, description="自定义HSV颜色范围")
-    charset_range: Optional[Union[int, str]] = Field(None, description="字符集范围限制")
+    charset_range: Optional[Union[int, str, List[str]]] = Field(None, description="字符集范围限制")
 
 
 class DetectionRequest(BaseModel):
@@ -52,12 +52,14 @@ class SlideMatchRequest(BaseModel):
     target_image: str = Field(..., description="滑块图片（base64编码）")
     background_image: str = Field(..., description="背景图片（base64编码）")
     simple_target: bool = Field(False, description="是否为简单滑块")
+    flag: bool = Field(False, description="裁剪失败时是否直接返回错误")
 
 
 class SlideComparisonRequest(BaseModel):
     """滑块比较请求模型"""
     target_image: str = Field(..., description="带坑位的图片（base64编码）")
     background_image: str = Field(..., description="完整背景图片（base64编码）")
+    flag: bool = Field(False, description="旧版兼容字段")
 
 
 class APIResponse(BaseModel):
@@ -88,6 +90,7 @@ class DetectionResponse(BaseModel):
 
 
 class SlideResponse(BaseModel):
+    confidence: Optional[float] = Field(None, description="Template matching confidence, 0-1")
     """滑块响应模型"""
     target: List[int] = Field(..., description="目标位置坐标")
     target_x: Optional[int] = Field(None, description="滑块X偏移")
@@ -98,7 +101,7 @@ class SlideResponse(BaseModel):
 class MCPRequest(BaseModel):
     """MCP请求模型"""
     method: str = Field(..., description="方法名")
-    params: Dict[str, Any] = Field({}, description="参数")
+    params: Dict[str, Any] = Field(default_factory=dict, description="参数")
     id: Optional[Union[str, int]] = Field(None, description="请求ID")
 
 
@@ -112,5 +115,5 @@ class MCPResponse(BaseModel):
 class MCPCapabilities(BaseModel):
     """MCP能力声明模型"""
     tools: List[Dict[str, Any]] = Field(..., description="可用工具列表")
-    resources: List[Dict[str, Any]] = Field([], description="可用资源列表")
-    prompts: List[Dict[str, Any]] = Field([], description="可用提示列表")
+    resources: List[Dict[str, Any]] = Field(default_factory=list, description="可用资源列表")
+    prompts: List[Dict[str, Any]] = Field(default_factory=list, description="可用提示列表")

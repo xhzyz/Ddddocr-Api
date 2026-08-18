@@ -1,0 +1,9 @@
+services:
+  ddddocr-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    image: local/ddddocr-api-gpu:1.6.1
+    environment:
+      DDDDOCR_USE_GPU: "true"
+    gpus: all

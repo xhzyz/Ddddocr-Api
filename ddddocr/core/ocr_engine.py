@@ -124,6 +124,12 @@ class OCREngine(BaseEngine):
         
         # 验证输入
         validate_image_input(image)
+
+        # ``charset_range`` is a per-call restriction. Preserve any
+        # persistent range configured through ``set_ranges`` while applying
+        # this temporary value.
+        previous_charset_range = self.charset_manager.get_charset_range()
+        temporary_charset_range = charset_range is not None
         
         try:
             # 加载图像
@@ -152,9 +158,20 @@ class OCREngine(BaseEngine):
             result = self._inference(processed_image, probability)
             
             return result
-            
+
         except Exception as e:
             raise ImageProcessError(f"OCR识别失败: {str(e)}") from e
+        finally:
+            if temporary_charset_range:
+                try:
+                    previous_values = [item for item in previous_charset_range if item != ""]
+                    if previous_values:
+                        self.charset_manager.set_ranges(previous_values)
+                    else:
+                        self.charset_manager.clear_ranges()
+                except Exception:
+                    # Never mask the recognition result with cleanup errors.
+                    self.charset_manager.clear_ranges()
     
     def _preprocess_image(self, image: Image.Image, png_fix: bool) -> np.ndarray:
         """
@@ -176,7 +193,7 @@ class OCREngine(BaseEngine):
             if not self.use_import_onnx:
                 # 默认模型的预处理
                 target_height = 64
-                target_width = int(image.size[0] * (target_height / image.size[1]))
+                target_width = max(1, int(image.size[0] * (target_height / image.size[1])))
                 image = ImageProcessor.resize_image(image, (target_width, target_height))
                 image = ImageProcessor.convert_to_grayscale(image)
             else:
@@ -186,7 +203,7 @@ class OCREngine(BaseEngine):
                         image = ImageProcessor.resize_image(image, (self.resize[1], self.resize[1]))
                     else:
                         target_height = self.resize[1]
-                        target_width = int(image.size[0] * (target_height / image.size[1]))
+                        target_width = max(1, int(image.size[0] * (target_height / image.size[1])))
                         image = ImageProcessor.resize_image(image, (target_width, target_height))
                 else:
                     image = ImageProcessor.resize_image(image, (self.resize[0], self.resize[1]))
@@ -194,12 +211,25 @@ class OCREngine(BaseEngine):
                 # 根据通道数转换
                 if self.channel == 1:
                     image = ImageProcessor.convert_to_grayscale(image)
+                else:
+                    image = image.convert('RGB')
             
             # 转换为numpy数组并标准化
             img_array = np.array(image).astype(np.float32)
             
             # 标准化到[0,1]
             img_array = img_array / 255.0
+
+            # Match the normalization used by the original ddddocr models
+            # and dddd_trainer exports.
+            if not self.use_import_onnx:
+                img_array = (img_array - 0.5) / 0.5
+            elif self.channel == 1:
+                img_array = (img_array - 0.456) / 0.224
+            else:
+                img_array = (
+                    img_array - np.array([0.485, 0.456, 0.406], dtype=np.float32)
+                ) / np.array([0.229, 0.224, 0.225], dtype=np.float32)
             
             # 调整维度
             if len(img_array.shape) == 2:
@@ -231,6 +261,11 @@ class OCREngine(BaseEngine):
             
             # 执行推理
             outputs = self.session.run(None, {input_name: image_array})
+
+            if self.use_import_onnx:
+                if self.word:
+                    return self._process_word_output(outputs)
+                return self._process_custom_sequence_output(outputs[0])
             
             # 处理输出
             if probability:
@@ -241,6 +276,41 @@ class OCREngine(BaseEngine):
         except Exception as e:
             raise ModelLoadError(f"模型推理失败: {str(e)}") from e
     
+    def _process_word_output(self, outputs: List[np.ndarray]) -> str:
+        """Decode the single/word model format produced by dddd_trainer."""
+        source = np.asarray(outputs[1] if len(outputs) > 1 else outputs[0])
+        charset = self.charset_manager.get_charset()
+        if (
+            source.ndim >= 2
+            and source.shape[-1] == len(charset)
+            and np.issubdtype(source.dtype, np.floating)
+        ):
+            indices = np.argmax(source, axis=-1).reshape(-1)
+        else:
+            indices = source.reshape(-1)
+        return ''.join(
+            charset[int(index)]
+            for index in indices
+            if 0 <= int(index) < len(charset)
+        )
+
+    def _process_custom_sequence_output(self, output: np.ndarray) -> str:
+        """Decode custom sequence models returning logits or class indices."""
+        values = np.asarray(output)
+        charset = self.charset_manager.get_charset()
+        if (
+            values.ndim >= 2
+            and values.shape[-1] == len(charset)
+            and np.issubdtype(values.dtype, np.floating)
+        ):
+            return self._process_text_output(values)
+        indices = self._ctc_decode_indices(values.reshape(-1))
+        return ''.join(
+            charset[index]
+            for index in indices
+            if 0 <= index < len(charset)
+        )
+
     def _process_text_output(self, output: np.ndarray) -> str:
         """
         处理文本输出
@@ -253,28 +323,28 @@ class OCREngine(BaseEngine):
         """
         try:
             # 获取预测结果
+            valid_indices = self.charset_manager.get_valid_indices()
             if len(output.shape) == 3:
                 # 序列输出 (sequence_length, batch_size, num_classes) 或 (batch_size, sequence_length, num_classes)
                 # 需要判断哪个维度是batch_size=1
                 if output.shape[1] == 1:
                     # 形状为 (sequence_length, 1, num_classes)
-                    predicted_indices = np.argmax(output[:, 0, :], axis=1)
+                    predicted_indices = self._restricted_argmax(output[:, 0, :], valid_indices)
                 elif output.shape[0] == 1:
                     # 形状为 (1, sequence_length, num_classes)
-                    predicted_indices = np.argmax(output[0, :, :], axis=1)
+                    predicted_indices = self._restricted_argmax(output[0, :, :], valid_indices)
                 else:
                     # 默认取第一个batch
-                    predicted_indices = np.argmax(output[0, :, :], axis=1)
+                    predicted_indices = self._restricted_argmax(output[0, :, :], valid_indices)
             else:
                 # 单字符输出或2D序列输出
-                predicted_indices = np.argmax(output, axis=-1)
+                predicted_indices = self._restricted_argmax(output, valid_indices)
                 # 确保结果是数组形式，即使是单个值
                 if predicted_indices.ndim == 0:
                     predicted_indices = np.array([predicted_indices])
             
             # 正确的CTC解码：在索引级别进行去重
             charset = self.charset_manager.get_charset()
-            valid_indices = self.charset_manager.get_valid_indices()
 
             # 步骤1：CTC解码 - 在索引级别去除连续重复
             decoded_indices = self._ctc_decode_indices(predicted_indices)
@@ -296,6 +366,15 @@ class OCREngine(BaseEngine):
             
         except Exception as e:
             raise ModelLoadError(f"文本输出处理失败: {str(e)}") from e
+
+    @staticmethod
+    def _restricted_argmax(logits: np.ndarray, valid_indices: List[int]) -> np.ndarray:
+        """Select the highest-scoring class only from the configured range."""
+        if not valid_indices:
+            return np.argmax(logits, axis=-1)
+        indices = np.asarray(valid_indices, dtype=np.int64)
+        local_indices = np.argmax(np.take(logits, indices, axis=-1), axis=-1)
+        return indices[local_indices]
 
     def _ctc_decode_indices(self, predicted_indices: np.ndarray) -> List[int]:
         """
@@ -350,11 +429,25 @@ class OCREngine(BaseEngine):
             
             # 构建概率信息
             charset = self.charset_manager.get_charset()
+            probability_values = probabilities.tolist()
+            active_range = self.charset_manager.get_charset_range()
+            valid_indices = self.charset_manager.get_valid_indices()
+            if active_range and valid_indices:
+                legacy_charsets = [charset[index] for index in valid_indices]
+                legacy_probability = np.take(probabilities, valid_indices, axis=-1).tolist()
+            else:
+                legacy_charsets = charset
+                legacy_probability = probability_values
             prob_info = {
                 'text': text_result,
-                'probabilities': probabilities.tolist(),
+                'probabilities': probability_values,
                 'charset': charset,
-                'confidence': float(np.mean(np.max(probabilities, axis=-1)))
+                'confidence': float(np.mean(np.max(probabilities, axis=-1))),
+                # Original ddddocr releases used these plural/singular key
+                # names. Keep aliases so existing callers and the refactored
+                # API can consume the same result without schema branching.
+                'charsets': legacy_charsets,
+                'probability': legacy_probability,
             }
             
             return prob_info
@@ -393,6 +486,10 @@ class OCREngine(BaseEngine):
             字符集列表
         """
         return self.charset_manager.get_charset()
+
+    def clear_charset_range(self) -> None:
+        """Remove a persistent charset restriction and restore all indices."""
+        self.charset_manager.clear_ranges()
     
     def _reload_model(self) -> None:
         """重新加载模型"""

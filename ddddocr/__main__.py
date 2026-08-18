@@ -5,6 +5,17 @@ import sys
 import os
 
 
+def _parse_bool(value):
+    if isinstance(value, bool):
+        return value
+    lowered = str(value).strip().lower()
+    if lowered in {"true", "1", "yes", "y", "on"}:
+        return True
+    if lowered in {"false", "0", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError("expected true/false")
+
+
 def main():
     """
     ddddocr 命令行入口点
@@ -18,31 +29,39 @@ def main():
     api_parser = subparsers.add_parser('api', help='启动 API 服务')
     
     # API 服务配置
-    api_parser.add_argument('--host', type=str, default='0.0.0.0',
+    api_parser.add_argument('--host', type=str, default=os.environ.get('DDDDOCR_HOST', '0.0.0.0'),
                            help='API 服务主机地址，默认 0.0.0.0')
-    api_parser.add_argument('--port', type=int, default=8000,
+    api_parser.add_argument('--port', type=int, default=int(os.environ.get('DDDDOCR_PORT', '8000')),
                            help='API 服务端口，默认 8000')
-    api_parser.add_argument('--workers', type=int, default=1,
+    api_parser.add_argument('--workers', type=int, default=int(os.environ.get('DDDDOCR_WORKERS', '1')),
                            help='API 服务工作进程数，默认为 1')
     
     # OCR 引擎配置
-    api_parser.add_argument('--ocr', type=lambda x: x.lower() == 'true', default=True,
-                           help='是否启用 OCR 功能（true/false）')
-    api_parser.add_argument('--det', type=lambda x: x.lower() == 'true', default=False,
-                           help='是否启用目标检测功能（true/false）')
-    api_parser.add_argument('--old', type=lambda x: x.lower() == 'true', default=False,
+    api_parser.add_argument('--ocr', type=_parse_bool,
+                           default=_parse_bool(os.environ.get('DDDDOCR_OCR', 'true')),
+                           help='启动时是否预加载 OCR 模型（true/false）')
+    api_parser.add_argument('--det', type=_parse_bool,
+                           default=_parse_bool(os.environ.get('DDDDOCR_DET', 'false')),
+                           help='启动时是否预加载目标检测模型（true/false）')
+    api_parser.add_argument('--old', type=_parse_bool,
+                           default=_parse_bool(os.environ.get('DDDDOCR_OLD', 'false')),
                            help='是否使用旧版 OCR 模型（true/false）')
-    api_parser.add_argument('--beta', type=lambda x: x.lower() == 'true', default=False,
+    api_parser.add_argument('--beta', type=_parse_bool,
+                           default=_parse_bool(os.environ.get('DDDDOCR_BETA', 'false')),
                            help='是否使用 Beta 版 OCR 模型（true/false）')
-    api_parser.add_argument('--use-gpu', type=lambda x: x.lower() == 'true', default=False,
+    api_parser.add_argument('--use-gpu', type=_parse_bool,
+                           default=_parse_bool(os.environ.get('DDDDOCR_USE_GPU', 'false')),
                            help='是否使用 GPU 加速（true/false）')
-    api_parser.add_argument('--device-id', type=int, default=0,
+    api_parser.add_argument('--device-id', type=int, default=int(os.environ.get('DDDDOCR_DEVICE_ID', '0')),
                            help='GPU 设备 ID，默认 0')
-    api_parser.add_argument('--show-ad', type=lambda x: x.lower() == 'true', default=True,
+    api_parser.add_argument('--show-ad', type=_parse_bool,
+                           default=_parse_bool(os.environ.get('DDDDOCR_SHOW_AD', 'false')),
                            help='是否显示广告（true/false）')
-    api_parser.add_argument('--import-onnx-path', type=str, default='',
+    api_parser.add_argument('--import-onnx-path', type=str,
+                           default=os.environ.get('DDDDOCR_IMPORT_ONNX_PATH', ''),
                            help='自定义模型路径')
-    api_parser.add_argument('--charsets-path', type=str, default='',
+    api_parser.add_argument('--charsets-path', type=str,
+                           default=os.environ.get('DDDDOCR_CHARSETS_PATH', ''),
                            help='自定义字符集路径')
     
     # 解析命令行参数

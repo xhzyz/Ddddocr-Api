@@ -8,8 +8,46 @@
   <strong>一个简单易用的通用验证码识别Python库</strong>
 </p>
 
+> [!NOTE]
+> 本仓库基于 [sml2h3/ddddocr](https://github.com/sml2h3/ddddocr) 进行 Docker HTTP API
+> 完整封装，保留上游 MIT License、模型和算法能力。Docker 镜像发布于
+> [`xhzyz/ddddocr-api`](https://hub.docker.com/r/xhzyz/ddddocr-api)。
+
+## Docker API 一键部署
+
+下面是推荐的单容器运行方式，宿主机和容器内部都使用 `5555` 端口：
+
+```bash
+docker pull xhzyz/ddddocr-api:1.6.1
+
+docker run -d \
+  --name ddddocr-api \
+  --restart unless-stopped \
+  -e DDDDOCR_HOST=0.0.0.0 \
+  -e DDDDOCR_PORT=5555 \
+  -p 5555:5555 \
+  xhzyz/ddddocr-api:1.6.1
+```
+
+Windows PowerShell/CMD 一行命令：
+
+```powershell
+docker pull xhzyz/ddddocr-api:1.6.1
+docker run -d --name ddddocr-api --restart unless-stopped -e DDDDOCR_HOST=0.0.0.0 -e DDDDOCR_PORT=5555 -p 5555:5555 xhzyz/ddddocr-api:1.6.1
+```
+
+启动后访问：
+
+- API 文档：`http://服务器IP:5555/docs`
+- 健康检查：`http://服务器IP:5555/health`
+- 完整中文接口说明：[`使用说明书.md`](使用说明书.md)
+
+如果服务需要暴露到公网，请通过 `DDDDOCR_API_KEY` 启用鉴权，并配合 HTTPS、限流和
+防火墙使用。
+
 ## 目录
 
+- [Docker API 一键部署](#docker-api-一键部署)
 - [赞助合作商](#赞助合作商)
 - [项目介绍](#项目介绍)
 - [环境支持](#环境支持)
@@ -91,8 +129,8 @@ pip install ddddocr
 ### 从源码安装
 
 ```bash
-git clone https://github.com/sml2h3/ddddocr.git
-cd ddddocr
+git clone https://github.com/xhzyz/Ddddocr-Api.git
+cd Ddddocr-Api
 pip install .
 ```
 
@@ -814,10 +852,10 @@ python -m ddddocr api
 # 指定 API 服务配置
 python -m ddddocr api --host 0.0.0.0 --port 8000 --workers 4
 
-# 配置 OCR 功能
+# 启动时预加载 OCR 模型
 python -m ddddocr api --ocr true --beta true
 
-# 配置目标检测功能
+# 只预加载目标检测模型
 python -m ddddocr api --ocr false --det true
 ```
 
@@ -830,13 +868,13 @@ python -m ddddocr api --ocr false --det true
 | `--host` | 字符串 | 0.0.0.0 | API 服务主机地址（`python -m ddddocr api` 默认） |
 | `--port` | 整数 | 8000 | API 服务端口 |
 | `--workers` | 整数 | 1 | API 服务工作进程数 |
-| `--ocr` | 布尔值 | true | 是否启用 OCR 功能 |
-| `--det` | 布尔值 | false | 是否启用目标检测功能 |
+| `--ocr` | 布尔值 | true | 启动时是否预加载 OCR 模型 |
+| `--det` | 布尔值 | false | 启动时是否预加载目标检测模型 |
 | `--old` | 布尔值 | false | 是否使用旧版 OCR 模型 |
 | `--beta` | 布尔值 | false | 是否使用 Beta 版 OCR 模型 |
 | `--use-gpu` | 布尔值 | false | 是否使用 GPU 加速 |
 | `--device-id` | 整数 | 0 | GPU 设备 ID |
-| `--show-ad` | 布尔值 | true | 是否显示广告 |
+| `--show-ad` | 布尔值 | false | 是否显示广告 |
 | `--import-onnx-path` | 字符串 | "" | 自定义模型路径 |
 | `--charsets-path` | 字符串 | "" | 自定义字符集路径 |
 
@@ -849,11 +887,11 @@ python -m ddddocr api --ocr false --det true
 docker build -t ddddocr-api .
 
 # 运行 Docker 容器
-docker run -d --name ddddocr-api -p 8000:8000 ddddocr-api
+docker run -d --name ddddocr-api -p 127.0.0.1:5555:8000 ddddocr-api
 
 # 使用自定义配置运行
 docker run -d --name ddddocr-api \
-  -p 8000:8000 \
+  -p 127.0.0.1:5555:8000 \
   -e DDDDOCR_OCR=true \
   -e DDDDOCR_BETA=true \
   -e DDDDOCR_WORKERS=4 \
@@ -864,11 +902,24 @@ docker run -d --name ddddocr-api \
 
 ```bash
 # 使用默认配置启动
-docker-compose up -d
+docker compose up -d --build
 
 # 使用自定义配置启动
-DDDDOCR_OCR=true DDDDOCR_BETA=true DDDDOCR_WORKERS=4 docker-compose up -d
+DDDDOCR_OCR=true DDDDOCR_BETA=true DDDDOCR_WORKERS=1 docker compose up -d --build
 ```
+
+CPU/GPU、自定义模型、API 鉴权和完整调用示例请参阅
+[`DEPLOY_DOCKER.md`](DEPLOY_DOCKER.md)。NVIDIA GPU 使用：
+
+完整的中文接口参数、响应示例和兼容路由清单请参阅
+[`使用说明书.md`](使用说明书.md)。
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+```
+
+Docker API 没有删除 SDK 功能：OCR（默认/旧版/Beta/自定义模型）、概率输出、
+颜色与字符范围、目标检测和两种滑块算法均可用，并保留旧版管理接口兼容路由。
 
 ### API 接口说明
 
@@ -886,8 +937,10 @@ POST /ocr
 {
   "image": "图片的Base64编码字符串",
   "probability": false,
+  "png_fix": false,
   "colors": [],
-  "custom_color_ranges": null
+  "custom_color_ranges": null,
+  "charset_range": null
 }
 ```
 
@@ -900,7 +953,7 @@ POST /ocr
 }
 ```
 
-> **注意**：当 `probability=true` 时，API 会返回 `result` 为一个字典，包含 `charsets` 与 `probability` 字段，结构与本地 `classification(probability=True)` 一致。
+> **注意**：当 `probability=true` 时，API 会返回 `result` 字典。兼容字段为 `charsets`、`probability`，同时提供 `text`、`confidence`、`charset`、`probabilities` 别名。
 
 #### 2. 目标检测接口
 
@@ -952,7 +1005,8 @@ POST /slide_match
   "result": {
     "target_x": 0,
     "target_y": 0,
-    "target": [x1, y1, x2, y2]
+    "target": [x1, y1, x2, y2],
+    "confidence": 0.98
   },
   "processing_time": 0.123
 }
@@ -1034,6 +1088,23 @@ POST /ocr/file
 
 可以通过表单字段上传图片文件。
 
+#### 批量与管理接口
+
+除上述识别接口外，服务还提供：
+
+- `POST /ocr/batch`：批量 OCR；
+- `GET /charset`：读取当前模型字符集；
+- `GET /model_info`：读取模型和 ONNX execution provider；
+- `GET /instances`、`POST /instances/cleanup`：查看/清理缓存实例；
+- `POST /set_charset_range`：设置字符范围，传入 `null` 可重置；
+- `GET /config`：查看服务限制、鉴权状态和执行 provider。
+- `GET /mcp/capabilities`、`POST /mcp/call`：MCP 工具协议兼容接口。
+- `POST /initialize`、`POST /switch-model`、`POST /toggle-feature`、
+  `POST /detect`、`GET /status`：旧版 HTTP 客户端兼容接口。
+
+若设置了 `DDDDOCR_API_KEY`，除 `/health` 和 `/docs` 外的接口需要携带
+`X-API-Key` 或 `Authorization: Bearer <key>`。
+
 ### API 客户端示例
 
 #### Python 示例 (Base64编码方式)
@@ -1047,7 +1118,7 @@ with open("captcha.png", "rb") as f:
     img_base64 = base64.b64encode(f.read()).decode()
 
 # 发送OCR请求
-url = "http://localhost:8000/ocr"
+url = "http://localhost:5555/ocr"
 response = requests.post(url, json={"image": img_base64})
 
 # 处理响应
@@ -1064,7 +1135,7 @@ import requests
 files = {"file": open("captcha.png", "rb")}
 
 # 发送OCR请求
-url = "http://localhost:8000/ocr/file"
+url = "http://localhost:5555/ocr/file"
 response = requests.post(url, files=files)
 
 # 处理响应
@@ -1079,15 +1150,20 @@ print(f"识别结果: {result['result']}")
 | `DDDDOCR_HOST` | 0.0.0.0（CLI 默认）/ 127.0.0.1（直接运行 `python -m ddddocr.api` 默认） | API 服务主机地址 |
 | `DDDDOCR_PORT` | 8000 | API 服务端口 |
 | `DDDDOCR_WORKERS` | 1 | API 服务工作进程数 |
-| `DDDDOCR_OCR` | true | 是否启用 OCR 功能 |
-| `DDDDOCR_DET` | false | 是否启用目标检测功能 |
+| `DDDDOCR_OCR` | true | 启动时是否预加载 OCR 模型 |
+| `DDDDOCR_DET` | false | 启动时是否预加载目标检测模型 |
 | `DDDDOCR_OLD` | false | 是否使用旧版 OCR 模型 |
 | `DDDDOCR_BETA` | false | 是否使用 Beta 版 OCR 模型 |
 | `DDDDOCR_USE_GPU` | false | 是否使用 GPU 加速 |
 | `DDDDOCR_DEVICE_ID` | 0 | GPU 设备 ID |
-| `DDDDOCR_SHOW_AD` | true | 是否显示广告 |
+| `DDDDOCR_SHOW_AD` | false | 是否显示广告 |
 | `DDDDOCR_IMPORT_ONNX_PATH` | "" | 自定义模型路径 |
 | `DDDDOCR_CHARSETS_PATH` | "" | 自定义字符集路径 |
+| `DDDDOCR_API_KEY` | "" | 可选 API 密钥 |
+| `DDDDOCR_CORS_ORIGINS` | "" | 逗号分隔的 CORS 来源 |
+| `DDDDOCR_MAX_IMAGE_BYTES` | 8388608 | 单张图片最大字节数 |
+| `DDDDOCR_MAX_IMAGE_SIDE` | 4096 | 图片最长边上限 |
+| `DDDDOCR_MAX_BATCH_SIZE` | 32 | 单次批量 OCR 上限 |
 
 ## 许可证
 

@@ -21,21 +21,22 @@ classifiers = [
 ]
 dependencies = [
   "numpy",
-  "onnxruntime",
+  "onnxruntime>=1.16,<2",
   "Pillow",
   "opencv-python; sys_platform == 'win32' or sys_platform == 'darwin'",
   "opencv-python-headless; sys_platform == 'linux'",
 ]
 
 [project.urls]
-Homepage = "https://github.com/sml2h3/ddddocr"
+Homepage = "https://github.com/xhzyz/Ddddocr-Api"
+Upstream = "https://github.com/sml2h3/ddddocr"
 
 [project.optional-dependencies]
 api = [
-  "fastapi>=0.68.0",
-  "uvicorn>=0.15.0",
-  "python-multipart>=0.0.5",
-  "pydantic>=1.8.0,<3",
+  "fastapi>=0.100.0,<1",
+  "uvicorn>=0.23.0,<1",
+  "python-multipart>=0.0.6,<1",
+  "pydantic>=1.10.0,<3",
 ]
 
 [project.scripts]

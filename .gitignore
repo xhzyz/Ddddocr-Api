@@ -1,0 +1,9 @@
+.venv/
+.uv-cache/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+custom_models/*
+!custom_models/.gitkeep

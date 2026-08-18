@@ -35,6 +35,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="是否请求概率输出",
     )
+    parser.add_argument(
+        "--api-key",
+        default="",
+        help="可选 API 密钥（X-API-Key）",
+    )
     return parser
 
 
@@ -53,8 +58,9 @@ def main() -> int:
         parser.error(f"文件 {args.image} 不存在")
 
     payload = payload_from_image(args.image, args.probability)
+    headers = {"X-API-Key": args.api_key} if args.api_key else {}
     try:
-        response = requests.post(args.endpoint, json=payload, timeout=15)
+        response = requests.post(args.endpoint, json=payload, headers=headers, timeout=30)
     except requests.RequestException as exc:
         parser.error(f"请求 API 失败: {exc}")
         return 1

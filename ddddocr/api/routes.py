@@ -160,7 +160,10 @@ def create_routes(app: FastAPI, service):
             
             # 执行滑块匹配
             result = service.slide_instance.slide_match(
-                target_data, background_data, simple_target=request.simple_target
+                target_data,
+                background_data,
+                simple_target=request.simple_target,
+                flag=request.flag,
             )
             
             response_data = SlideResponse(**result)

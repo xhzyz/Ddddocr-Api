@@ -178,7 +178,10 @@ class MCPHandler:
                     
                     # 执行滑块匹配
                     result = self.service.slide_instance.slide_match(
-                        target_data, background_data, simple_target=slide_request.simple_target
+                        target_data,
+                        background_data,
+                        simple_target=slide_request.simple_target,
+                        flag=slide_request.flag,
                     )
                     
                 elif method == "ddddocr_slide_comparison":
