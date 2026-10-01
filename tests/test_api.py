@@ -191,6 +191,58 @@ def test_slider_responses_keep_confidence_and_integer_coordinates(client):
     assert comparison.json()["result"]["target_x"] == 5
 
 
+def test_xzxxn777_compatibility_routes(client):
+    slider = client.post(
+        "/capcode",
+        json={
+            "slidingImage": image_base64(),
+            "backImage": image_base64(),
+            "simpleTarget": True,
+        },
+    )
+    comparison = client.post(
+        "/slideComparison",
+        json={"slidingImage": image_base64(), "backImage": image_base64()},
+    )
+    classified = client.post("/classification", json={"image": image_base64()})
+    detected = client.post("/detection", json={"image": image_base64()})
+    cropped = client.post(
+        "/crop",
+        json={"image": image_base64(), "y_coordinate": 3},
+    )
+    selected = client.post("/select", json={"image": image_base64()})
+
+    assert slider.status_code == 200, slider.text
+    assert slider.json() == {"result": 12}
+    assert comparison.status_code == 200, comparison.text
+    assert comparison.json() == {"result": 5}
+    assert classified.status_code == 200, classified.text
+    assert classified.json() == {"result": "fake-ocr"}
+    assert detected.status_code == 200, detected.text
+    assert detected.json() == {"result": [[1, 2, 3, 4]]}
+    assert selected.status_code == 200, selected.text
+    assert selected.json() == [{"fake-ocr": [1, 2, 3, 4]}]
+
+    assert cropped.status_code == 200, cropped.text
+    crop_body = cropped.json()
+    with Image.open(io.BytesIO(base64.b64decode(crop_body["slidingImage"]))) as upper:
+        assert upper.size == (20, 3)
+    with Image.open(io.BytesIO(base64.b64decode(crop_body["backImage"]))) as lower:
+        assert lower.size == (20, 4)
+
+
+def test_xzxxn777_calculate_uses_safe_arithmetic_parser(client, monkeypatch):
+    def arithmetic_classification(self, image, **kwargs):
+        self.calls.append(("classification", image, kwargs))
+        return "12÷3="
+
+    monkeypatch.setattr(FakeDdddOcr, "classification", arithmetic_classification)
+    response = client.post("/calculate", json={"image": image_base64()})
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"result": 4.0}
+
+
 def test_charset_management_and_reset(client):
     update = client.post("/set_charset_range", json={"charset_range": ["0", "1"]})
     charset = client.get("/charset?include_values=true")

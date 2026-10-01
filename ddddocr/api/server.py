@@ -26,7 +26,7 @@ class DDDDOCRService:
         self.slide_instance = None
         self.enabled_features = set()
         self.start_time = time.time()
-        self.version = "1.6.1"
+        self.version = "1.6.2"
 
     def initialize(self, config: InitializeRequest):
         self.cleanup()

@@ -10,11 +10,14 @@ This module is the single canonical API entry point used by both
 
 from __future__ import annotations
 
+import ast
 import base64
 import binascii
 import io
 import logging
+import math
 import os
+import re
 import secrets
 import threading
 import time
@@ -98,7 +101,7 @@ def _package_version() -> str:
     try:
         return metadata.version("ddddocr")
     except metadata.PackageNotFoundError:
-        return "1.6.1"
+        return "1.6.2"
 
 
 VERSION = _package_version()
@@ -139,6 +142,10 @@ OPENAPI_TAGS = [
     {"name": "OCR 识别", "description": "文字验证码识别，支持 Base64、文件上传和批量处理。"},
     {"name": "目标检测", "description": "调用 DdddOcr 目标检测模型返回边界框。"},
     {"name": "滑块识别", "description": "滑块模板匹配和两图差异比较。"},
+    {
+        "name": "xzxxn777 兼容",
+        "description": "兼容 xzxxn777/ddddocr 的请求字段、接口路径和成功响应格式。",
+    },
     {"name": "模型管理", "description": "字符集、模型实例和缓存管理。"},
     {"name": "旧版兼容", "description": "兼容早期 HTTP API 客户端的接口。"},
     {"name": "MCP", "description": "供 MCP/Agent 客户端调用的兼容接口。"},
@@ -190,6 +197,22 @@ class SlideMatchRequest(BaseModel):
 class SlideComparisonRequest(BaseModel):
     target_image: str = Field(..., description="带缺口图片的 Base64 字符串")
     background_image: str = Field(..., description="完整背景图片的 Base64 字符串")
+
+
+class XzSlideMatchRequest(BaseModel):
+    slidingImage: str = Field(..., description="滑块小图的 Base64 字符串或 Data URI")
+    backImage: str = Field(..., description="背景大图的 Base64 字符串或 Data URI")
+    simpleTarget: bool = Field(True, description="小图是否已经裁剪为简单目标")
+
+
+class XzSlideComparisonRequest(BaseModel):
+    slidingImage: str = Field(..., description="带缺口图片的 Base64 字符串或 Data URI")
+    backImage: str = Field(..., description="完整背景图片的 Base64 字符串或 Data URI")
+
+
+class XzCropRequest(BaseModel):
+    image: str = Field(..., description="待分割图片的 Base64 字符串或 Data URI")
+    y_coordinate: int = Field(..., gt=0, description="每个横向分区的高度")
 
 
 class CharsetRangeRequest(BaseModel):
@@ -771,6 +794,109 @@ def _slide_comparison_sync(target_data: bytes, background_data: bytes) -> Any:
         return managed.engine.slide_comparison(target_data, background_data)
 
 
+def _xz_target_x(result: Any) -> Union[int, float]:
+    """Return the x coordinate used by the xzxxn777 compatibility API."""
+    if not isinstance(result, dict):
+        raise ValueError("slide result must be an object")
+    target = result.get("target")
+    if not isinstance(target, (list, tuple)) or not target:
+        raise ValueError("slide result does not contain a target coordinate")
+    value = target[0]
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ValueError("slide target x coordinate is invalid")
+    return value
+
+
+def _calculate_expression(expression: Any) -> Union[int, float]:
+    """Evaluate the arithmetic subset accepted by the compatibility endpoint."""
+    if not isinstance(expression, str):
+        raise ValueError("OCR result is not an arithmetic expression")
+    normalized = expression.split("=", 1)[0].replace("×", "*").replace("÷", "/")
+    normalized = re.sub(r"[^0-9+\-*/().]", "", normalized)
+    if not normalized or len(normalized) > 128:
+        raise ValueError("no valid arithmetic expression was recognized")
+
+    try:
+        tree = ast.parse(normalized, mode="eval")
+    except SyntaxError as exc:
+        raise ValueError("recognized arithmetic expression is invalid") from exc
+
+    def evaluate(node: ast.AST) -> Union[int, float]:
+        if isinstance(node, ast.Expression):
+            return evaluate(node.body)
+        if isinstance(node, ast.Constant):
+            value = node.value
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return value
+            raise ValueError("expression contains an unsupported value")
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            value = evaluate(node.operand)
+            return value if isinstance(node.op, ast.UAdd) else -value
+        if isinstance(node, ast.BinOp):
+            left = evaluate(node.left)
+            right = evaluate(node.right)
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Div):
+                return left / right
+        raise ValueError("expression contains an unsupported operation")
+
+    try:
+        result = evaluate(tree)
+    except ZeroDivisionError as exc:
+        raise ValueError("arithmetic expression divides by zero") from exc
+    if isinstance(result, float) and not math.isfinite(result):
+        raise ValueError("calculation result is not finite")
+    return result
+
+
+def _crop_compat_image(image_data: bytes, y_coordinate: int) -> Dict[str, str]:
+    with Image.open(io.BytesIO(image_data)) as source:
+        image = source.convert("RGB")
+        if y_coordinate * 2 >= image.height:
+            raise ValueError("y_coordinate must leave a non-empty lower image section")
+        upper = image.crop((0, 0, image.width, y_coordinate))
+        lower = image.crop((0, y_coordinate * 2, image.width, image.height))
+
+    def encode(value: Image.Image) -> str:
+        output = io.BytesIO()
+        value.save(output, format="PNG")
+        return base64.b64encode(output.getvalue()).decode("ascii")
+
+    return {"slidingImage": encode(upper), "backImage": encode(lower)}
+
+
+def _select_compat_sync(
+    image_data: bytes,
+    ocr_config: EngineConfig,
+    det_config: EngineConfig,
+) -> List[Dict[str, Any]]:
+    boxes = _det_sync(det_config, image_data)
+    with Image.open(io.BytesIO(image_data)) as source:
+        image = source.convert("RGB")
+        width, height = image.size
+        results: List[Dict[str, Any]] = []
+        for raw_box in boxes:
+            if not isinstance(raw_box, (list, tuple)) or len(raw_box) < 4:
+                continue
+            x1, y1, x2, y2 = (int(value) for value in raw_box[:4])
+            x1, x2 = max(0, x1), min(width, x2)
+            y1, y2 = max(0, y1), min(height, y2)
+            if x2 <= x1 or y2 <= y1:
+                continue
+            cropped = image.crop((x1, y1, x2, y2))
+            output = io.BytesIO()
+            cropped.save(output, format="PNG")
+            request = OCRRequest(image="unused")
+            text = _ocr_sync(ocr_config, output.getvalue(), request)
+            results.append({str(text): [x1, y1, x2, y2]})
+    return results
+
+
 def _parse_form_bool(value: Union[bool, str], field_name: str) -> bool:
     if isinstance(value, bool):
         return value
@@ -1111,6 +1237,168 @@ def create_app() -> FastAPI:
         _schedule_cleanup(background_tasks)
         return {"result": _json_safe(result), "processing_time": time.perf_counter() - started}
 
+    # Compatibility facade for https://github.com/xzxxn777/ddddocr.  These
+    # routes intentionally keep that service's camelCase request fields and
+    # compact success responses while reusing this application's validation,
+    # API-key protection, engine cache and thread-pool execution.
+    @protected.post(
+        "/capcode",
+        tags=["xzxxn777 兼容"],
+        summary="滑块验证（兼容 /capcode）",
+        description="等价于 /slide_match；成功时仅返回滑块横坐标。",
+    )
+    async def xz_capcode(
+        request: XzSlideMatchRequest,
+        background_tasks: BackgroundTasks,
+    ) -> Dict[str, Any]:
+        target_data = _decode_base64_image(request.slidingImage, "slidingImage")
+        background_data = _decode_base64_image(request.backImage, "backImage")
+        try:
+            result = await run_in_threadpool(
+                _slide_match_sync,
+                target_data,
+                background_data,
+                request.simpleTarget,
+                False,
+            )
+            target_x = _xz_target_x(result)
+        except Exception as exc:
+            _raise_library_error(exc)
+        _schedule_cleanup(background_tasks)
+        return {"result": _json_safe(target_x)}
+
+    @protected.post(
+        "/classification",
+        tags=["xzxxn777 兼容"],
+        summary="OCR 识别（兼容 /classification）",
+    )
+    async def xz_classification(
+        request: Base64ImageRequest,
+        background_tasks: BackgroundTasks,
+        config: EngineConfig = Depends(_ocr_config),
+    ) -> Dict[str, Any]:
+        image_data = _decode_base64_image(request.image)
+        try:
+            result = await run_in_threadpool(
+                _ocr_sync,
+                config,
+                image_data,
+                OCRRequest(image=request.image),
+            )
+        except Exception as exc:
+            _raise_library_error(exc)
+        _schedule_cleanup(background_tasks)
+        return {"result": _json_safe(result)}
+
+    @protected.post(
+        "/detection",
+        tags=["xzxxn777 兼容"],
+        summary="位置识别（兼容 /detection）",
+    )
+    async def xz_detection(
+        request: Base64ImageRequest,
+        background_tasks: BackgroundTasks,
+        config: EngineConfig = Depends(_det_config),
+    ) -> Dict[str, Any]:
+        image_data = _decode_base64_image(request.image)
+        try:
+            result = await run_in_threadpool(_det_sync, config, image_data)
+        except Exception as exc:
+            _raise_library_error(exc)
+        _schedule_cleanup(background_tasks)
+        return {"result": _json_safe(result)}
+
+    @protected.post(
+        "/calculate",
+        tags=["xzxxn777 兼容"],
+        summary="数字计算（兼容 /calculate）",
+        description="先 OCR 识别算式，再使用受限算术解析器计算，不执行任意代码。",
+    )
+    async def xz_calculate(
+        request: Base64ImageRequest,
+        background_tasks: BackgroundTasks,
+        config: EngineConfig = Depends(_ocr_config),
+    ) -> Dict[str, Any]:
+        image_data = _decode_base64_image(request.image)
+        try:
+            expression = await run_in_threadpool(
+                _ocr_sync,
+                config,
+                image_data,
+                OCRRequest(image=request.image),
+            )
+            result = _calculate_expression(expression)
+        except Exception as exc:
+            _raise_library_error(exc)
+        _schedule_cleanup(background_tasks)
+        return {"result": _json_safe(result)}
+
+    @protected.post(
+        "/slideComparison",
+        tags=["xzxxn777 兼容"],
+        summary="滑块对比（兼容 /slideComparison）",
+        description="等价于 /slide_comparison；成功时仅返回缺口横坐标。",
+    )
+    async def xz_slide_comparison(
+        request: XzSlideComparisonRequest,
+        background_tasks: BackgroundTasks,
+    ) -> Dict[str, Any]:
+        target_data = _decode_base64_image(request.slidingImage, "slidingImage")
+        background_data = _decode_base64_image(request.backImage, "backImage")
+        try:
+            result = await run_in_threadpool(
+                _slide_comparison_sync,
+                target_data,
+                background_data,
+            )
+            target_x = _xz_target_x(result)
+        except Exception as exc:
+            _raise_library_error(exc)
+        _schedule_cleanup(background_tasks)
+        return {"result": _json_safe(target_x)}
+
+    @protected.post(
+        "/crop",
+        tags=["xzxxn777 兼容"],
+        summary="图片分割（兼容 /crop）",
+        description="返回顶部滑块图和底部背景图；为避免 SSRF，image 仅接受 Base64/Data URI。",
+    )
+    async def xz_crop(request: XzCropRequest) -> Dict[str, str]:
+        image_data = _decode_base64_image(request.image)
+        try:
+            return await run_in_threadpool(
+                _crop_compat_image,
+                image_data,
+                request.y_coordinate,
+            )
+        except Exception as exc:
+            _raise_library_error(exc)
+
+    @protected.post(
+        "/select",
+        tags=["xzxxn777 兼容"],
+        summary="图片点选（兼容 /select）",
+        description="检测所有目标，逐个裁剪并 OCR，返回文字到坐标框的映射列表。",
+    )
+    async def xz_select(
+        request: Base64ImageRequest,
+        background_tasks: BackgroundTasks,
+        ocr_config: EngineConfig = Depends(_ocr_config),
+        det_config: EngineConfig = Depends(_det_config),
+    ) -> List[Dict[str, Any]]:
+        image_data = _decode_base64_image(request.image)
+        try:
+            result = await run_in_threadpool(
+                _select_compat_sync,
+                image_data,
+                ocr_config,
+                det_config,
+            )
+        except Exception as exc:
+            _raise_library_error(exc)
+        _schedule_cleanup(background_tasks)
+        return _json_safe(result)
+
     @protected.post(
         "/set_charset_range",
         tags=["模型管理"],
@@ -1411,7 +1699,6 @@ def create_app() -> FastAPI:
         tags=["旧版兼容"],
         summary="旧版目标检测接口",
     )
-    @protected.post("/detection", response_model=LegacyAPIResponse, include_in_schema=False)
     async def legacy_detection(request: LegacyDetectionRequest) -> LegacyAPIResponse:
         try:
             with legacy_runtime.lock:

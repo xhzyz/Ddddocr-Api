@@ -18,7 +18,7 @@
 下面是推荐的单容器运行方式，宿主机和容器内部都使用 `5555` 端口：
 
 ```bash
-docker pull xhzyz/ddddocr-api:1.6.1
+docker pull xhzyz/ddddocr-api:1.6.2
 
 docker run -d \
   --name ddddocr-api \
@@ -26,14 +26,14 @@ docker run -d \
   -e DDDDOCR_HOST=0.0.0.0 \
   -e DDDDOCR_PORT=5555 \
   -p 5555:5555 \
-  xhzyz/ddddocr-api:1.6.1
+  xhzyz/ddddocr-api:1.6.2
 ```
 
 Windows PowerShell/CMD 一行命令：
 
 ```powershell
-docker pull xhzyz/ddddocr-api:1.6.1
-docker run -d --name ddddocr-api --restart unless-stopped -e DDDDOCR_HOST=0.0.0.0 -e DDDDOCR_PORT=5555 -p 5555:5555 xhzyz/ddddocr-api:1.6.1
+docker pull xhzyz/ddddocr-api:1.6.2
+docker run -d --name ddddocr-api --restart unless-stopped -e DDDDOCR_HOST=0.0.0.0 -e DDDDOCR_PORT=5555 -p 5555:5555 xhzyz/ddddocr-api:1.6.2
 ```
 
 启动后访问：
@@ -41,6 +41,31 @@ docker run -d --name ddddocr-api --restart unless-stopped -e DDDDOCR_HOST=0.0.0.
 - API 文档：`http://服务器IP:5555/docs`
 - 健康检查：`http://服务器IP:5555/health`
 - 完整中文接口说明：[`使用说明书.md`](使用说明书.md)
+
+同时兼容 [`xzxxn777/ddddocr`](https://github.com/xzxxn777/ddddocr) 的接口路径和请求字段：
+
+| 功能 | 兼容接口 |
+|---|---|
+| 滑块验证 | `POST /capcode` |
+| OCR 识别 | `POST /classification` |
+| 位置识别 | `POST /detection` |
+| 数字计算 | `POST /calculate` |
+| 滑块对比 | `POST /slideComparison` |
+| 图片分割 | `POST /crop` |
+| 图片点选 | `POST /select` |
+
+例如滑块验证请求：
+
+```json
+{
+  "slidingImage": "滑块小图Base64",
+  "backImage": "背景大图Base64",
+  "simpleTarget": true
+}
+```
+
+成功响应：`{"result": 123}`。端口使用本项目部署的 `5555`，因此完整地址为
+`http://服务器IP:5555/capcode`。
 
 如果服务需要暴露到公网，请通过 `DDDDOCR_API_KEY` 启用鉴权，并配合 HTTPS、限流和
 防火墙使用。

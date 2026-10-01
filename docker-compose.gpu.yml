@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.gpu
-    image: local/ddddocr-api-gpu:1.6.1
+    image: local/ddddocr-api-gpu:1.6.2
     environment:
       DDDDOCR_USE_GPU: "true"
     gpus: all

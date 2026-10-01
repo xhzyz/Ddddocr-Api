@@ -14,6 +14,8 @@
 - Base64、Data URI、文件上传和批量 OCR；
 - CPU、NVIDIA GPU、API Key、CORS、实例缓存和 MCP 兼容入口；
 - 旧 API 的 `/initialize`、`/switch-model`、`/toggle-feature`、`/detect`、`/status` 兼容路由。
+- `xzxxn777/ddddocr` 的 `/capcode`、`/classification`、`/detection`、`/calculate`、
+  `/slideComparison`、`/crop`、`/select` 兼容路由。
 
 CPU 镜像只是使用 `CPUExecutionProvider`，不是功能阉割。需要 CUDA 推理时使用 GPU Compose 覆盖文件。识别准确率仍由上游模型本身决定，Docker/API 不会提高或降低模型能力。
 
@@ -111,6 +113,18 @@ POST /ocr?use_gpu=true&device_id=0
 | `POST /initialize`、`POST /switch-model` | 兼容旧版显式初始化/切换模型客户端 |
 | `POST /toggle-feature`、`GET /status` | 兼容旧版功能开关和状态接口 |
 | `POST /detect` | 旧版检测接口，需先调用 `/initialize`；新客户端直接使用 `/det` |
+
+`xzxxn777/ddddocr` 客户端可以直接把端口改为 `5555` 后继续使用：
+
+| 接口 | 作用 |
+|---|---|
+| `POST /capcode` | 滑块模板匹配，返回横坐标 |
+| `POST /classification` | OCR 识别 |
+| `POST /detection` | 位置识别 |
+| `POST /calculate` | 数字算式识别与安全计算 |
+| `POST /slideComparison` | 滑块两图差异比较 |
+| `POST /crop` | 图片分割 |
+| `POST /select` | 图片点选识别 |
 
 滑块请求示例：
 
